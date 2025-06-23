@@ -1,0 +1,67 @@
+import itertools
+
+ALFABETO = "abcdefghijklmnñopqrstuvwxyz"
+
+def procesar_vigenere(texto, clave, modo):
+    clave_limpia = "".join(c for c in clave.lower() if c in ALFABETO)
+    
+    if not clave_limpia:
+        return "Error: La clave no contiene caracteres válidos del alfabeto."
+
+    ciclo_clave = itertools.cycle(clave_limpia)
+    texto_final = ""
+    
+    for caracter in texto.lower():
+        if caracter in ALFABETO:
+            caracter_clave = next(ciclo_clave)
+            indice_texto = ALFABETO.find(caracter)
+            indice_clave = ALFABETO.find(caracter_clave)
+            
+            if modo == 'cifrar':
+                nuevo_indice = (indice_texto + indice_clave) % len(ALFABETO)
+            elif modo == 'descifrar':
+                nuevo_indice = (indice_texto - indice_clave) % len(ALFABETO)
+            else:
+                return "Error: Modo no válido. Debe ser 'cifrar' o 'descifrar'."
+
+            texto_final += ALFABETO[nuevo_indice]
+        else:
+            texto_final += caracter
+            
+    return texto_final
+
+def main():
+    print("--- Cifrador Vigenère Interactivo ---")
+    
+    while True:
+        print("\n¿Qué deseas hacer?")
+        print("1. Cifrar un mensaje")
+        print("2. Descifrar un mensaje")
+        print("3. Salir del programa")
+        
+        opcion = input("Elige una opción (1, 2 o 3): ")
+        
+        if opcion == '1':
+            modo = 'cifrar'
+            print("\n--- Cifrar Mensaje ---")
+            texto = input("Introduce el texto a cifrar: ")
+            clave = input("Introduce la clave: ")
+            resultado = procesar_vigenere(texto, clave, modo)
+            print(f"\n> Texto Cifrado: {resultado}")
+            
+        elif opcion == '2':
+            modo = 'descifrar'
+            print("\n--- Descifrar Mensaje ---")
+            texto = input("Introduce el texto a descifrar: ")
+            clave = input("Introduce la clave: ")
+            resultado = procesar_vigenere(texto, clave, modo)
+            print(f"\n> Texto Descifrado: {resultado}")
+
+        elif opcion == '3':
+            print("\n¡Hasta luego!")
+            break
+        else:
+            print("\nOpción no válida. Por favor, elige 1, 2 o 3.")
+
+if __name__ == "__main__":
+    main()
