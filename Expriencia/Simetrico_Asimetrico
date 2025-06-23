@@ -1,0 +1,351 @@
+import os
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.backends import default_backend
+from cryptography.exceptions import InvalidSignature
+from cryptography.fernet import InvalidToken
+
+
+def generar_clave_simetrica(ruta_carpeta=".", nombre_archivo="clave_simetrica.key"):
+    clave = Fernet.generate_key()
+    ruta_completa = os.path.join(ruta_carpeta, nombre_archivo)
+    os.makedirs(ruta_carpeta, exist_ok=True)
+    try:
+        with open(ruta_completa, "wb") as clave_archivo:
+            clave_archivo.write(clave)
+        print(f"Clave simétrica generada y guardada en: {ruta_completa}")
+        return ruta_completa
+    except IOError as e:
+        print(f"Error al guardar la clave simétrica: {e}")
+        return None
+
+def cargar_clave_simetrica(ruta_clave):
+    try:
+        with open(ruta_clave, "rb") as clave_archivo:
+            return clave_archivo.read()
+    except FileNotFoundError:
+        print(f"Error: No se encontró el archivo de clave simétrica en '{ruta_clave}'.")
+        return None
+    except IOError as e:
+        print(f"Error al cargar la clave simétrica: {e}")
+        return None
+
+def cifrar_mensaje_simetrico(mensaje, clave):
+    fernet = Fernet(clave)
+    mensaje_cifrado = fernet.encrypt(mensaje.encode('utf-8'))
+    return mensaje_cifrado
+
+def descifrar_mensaje_simetrico(mensaje_cifrado, clave):
+    fernet = Fernet(clave)
+    try:
+        mensaje_descifrado = fernet.decrypt(mensaje_cifrado).decode('utf-8')
+        return mensaje_descifrado
+    except InvalidToken:
+        print("Error: No se pudo descifrar el mensaje. La clave podría ser incorrecta o el mensaje está corrupto.")
+        return None
+    except Exception as e:
+        print(f"Un error inesperado ocurrió durante el descifrado: {e}")
+        return None
+
+def generar_claves_asimetricas(ruta_carpeta=".", base_nombre="clave"):
+    clave_privada = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+        backend=default_backend()
+    )
+    clave_publica = clave_privada.public_key()
+    ruta_privada = os.path.join(ruta_carpeta, f"{base_nombre}_privada.pem")
+    ruta_publica = os.path.join(ruta_carpeta, f"{base_nombre}_publica.pem")
+    os.makedirs(ruta_carpeta, exist_ok=True)
+    try:
+        with open(ruta_privada, "wb") as f:
+            f.write(
+                clave_privada.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                )
+            )
+        print(f"Clave privada guardada en: {ruta_privada}")
+        with open(ruta_publica, "wb") as f:
+            f.write(
+                clave_publica.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                )
+            )
+        print(f"Clave pública guardada en: {ruta_publica}")
+        return ruta_privada, ruta_publica
+    except IOError as e:
+        print(f"Error al guardar las claves asimétricas: {e}")
+        return None, None
+
+def cargar_clave_privada(ruta_clave_privada):
+    try:
+        with open(ruta_clave_privada, "rb") as f:
+            return serialization.load_pem_private_key(
+                f.read(),
+                password=None,
+                backend=default_backend()
+            )
+    except FileNotFoundError:
+        print(f"Error: No se encontró el archivo de clave privada en '{ruta_clave_privada}'.")
+        return None
+    except (ValueError, TypeError, IOError) as e:
+        print(f"Error al cargar la clave privada: {e}")
+        return None
+
+def cargar_clave_publica(ruta_clave_publica):
+    try:
+        with open(ruta_clave_publica, "rb") as f:
+            return serialization.load_pem_public_key(
+                f.read(),
+                backend=default_backend()
+            )
+    except FileNotFoundError:
+        print(f"Error: No se encontró el archivo de clave pública en '{ruta_clave_publica}'.")
+        return None
+    except (ValueError, TypeError, IOError) as e:
+        print(f"Error al cargar la clave pública: {e}")
+        return None
+
+def cifrar_mensaje_asimetrico(mensaje, clave_publica):
+    try:
+        mensaje_cifrado = clave_publica.encrypt(
+            mensaje.encode('utf-8'),
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        return mensaje_cifrado
+    except Exception as e:
+        print(f"Error al cifrar asimétricamente: {e}. El mensaje podría ser demasiado largo para RSA.")
+        return None
+
+def descifrar_mensaje_asimetrico(mensaje_cifrado, clave_privada):
+    try:
+        mensaje_descifrado = clave_privada.decrypt(
+            mensaje_cifrado,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        return mensaje_descifrado.decode('utf-8')
+    except (ValueError, TypeError) as e:
+        print(f"Error al descifrar asimétricamente: {e}. La clave podría ser incorrecta o el mensaje está corrupto.")
+        return None
+    except Exception as e:
+        print(f"Un error inesperado ocurrió durante el descifrado asimétrico: {e}")
+        return None
+
+def firmar_mensaje(mensaje, clave_privada):
+    try:
+        firma = clave_privada.sign(
+            mensaje.encode('utf-8'),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        return firma
+    except Exception as e:
+        print(f"Error al firmar el mensaje: {e}")
+        return None
+
+def validar_autenticidad(mensaje, firma, clave_publica):
+    try:
+        clave_publica.verify(
+            firma,
+            mensaje.encode('utf-8'),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        return True
+    except InvalidSignature:
+        print("La firma no es válida.")
+        return False
+    except Exception as e:
+        print(f"Error durante la validación de la firma: {e}")
+        return False
+
+def limpiar_pantalla():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def leer_contenido_archivo(ruta_archivo):
+    try:
+        with open(ruta_archivo, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        print(f"Error: Archivo '{ruta_archivo}' no encontrado.")
+        return None
+    except IOError as e:
+        print(f"Error al leer el archivo '{ruta_archivo}': {e}")
+        return None
+
+def escribir_contenido_archivo(ruta_archivo, contenido_bytes, ruta_carpeta="."):
+    ruta_completa = os.path.join(ruta_carpeta, ruta_archivo)
+    os.makedirs(ruta_carpeta, exist_ok=True)
+    try:
+        with open(ruta_completa, "wb") as f:
+            f.write(contenido_bytes)
+        print(f"Contenido guardado en: {ruta_completa}")
+        return ruta_completa
+    except IOError as e:
+        print(f"Error al escribir en el archivo '{ruta_completa}': {e}")
+        return None
+
+def menu_simetrico():
+    while True:
+        limpiar_pantalla()
+        print("\n--- Criptografía Simétrica (Fernet) ---")
+        print("1. Generar nueva clave simétrica")
+        print("2. Cifrar mensaje")
+        print("3. Descifrar mensaje")
+        print("4. Volver al menú principal")
+        opcion = input("Seleccione una opción: ")
+
+        if opcion == '1':
+            ruta_carpeta = input("Ingrese la carpeta para guardar la clave (dejar vacío para actual): ") or "."
+            nombre_archivo = input("Ingrese el nombre para el archivo de clave (ej: mi_clave.key): ") or "clave_simetrica.key"
+            generar_clave_simetrica(ruta_carpeta, nombre_archivo)
+        elif opcion == '2':
+            ruta_clave = input("Ingrese la ruta del archivo de clave simétrica: ")
+            clave = cargar_clave_simetrica(ruta_clave)
+            if clave:
+                mensaje_original = input("Ingrese el mensaje a cifrar: ")
+                mensaje_cifrado = cifrar_mensaje_simetrico(mensaje_original, clave)
+                if mensaje_cifrado:
+                    print(f"\nMensaje cifrado (bytes): {mensaje_cifrado}")
+                    guardar = input("¿Desea guardar el mensaje cifrado en un archivo? (s/n): ").lower()
+                    if guardar == 's':
+                        nombre_archivo_cifrado = input("Nombre para el archivo cifrado (ej: mensaje_cifrado.dat): ")
+                        escribir_contenido_archivo(nombre_archivo_cifrado, mensaje_cifrado)
+        elif opcion == '3':
+            ruta_clave = input("Ingrese la ruta del archivo de clave simétrica: ")
+            clave = cargar_clave_simetrica(ruta_clave)
+            if clave:
+                origen_cifrado = input("¿El mensaje cifrado está en un archivo (f) o lo ingresará manualmente (m)?: ").lower()
+                mensaje_cifrado = None
+                if origen_cifrado == 'f':
+                    ruta_archivo_cifrado = input("Ingrese la ruta del archivo con el mensaje cifrado: ")
+                    mensaje_cifrado = leer_contenido_archivo(ruta_archivo_cifrado)
+                elif origen_cifrado == 'm':
+                    print("Pegue el mensaje cifrado (la cadena que comienza con 'gAAAAA...'):")
+                    try:
+                        entrada_cifrada = input("> ")
+                        if entrada_cifrada.startswith("b'") and entrada_cifrada.endswith("'"):
+                           mensaje_cifrado = eval(entrada_cifrada)
+                        else:
+                           mensaje_cifrado = entrada_cifrada.encode('latin-1')
+                    except Exception as e:
+                        print(f"Error al procesar la entrada del mensaje cifrado: {e}")
+                        mensaje_cifrado = None
+
+                if mensaje_cifrado:
+                    mensaje_descifrado = descifrar_mensaje_simetrico(mensaje_cifrado, clave)
+                    if mensaje_descifrado:
+                        print(f"\nMensaje descifrado: {mensaje_descifrado}")
+        elif opcion == '4':
+            break
+        else:
+            print("Opción no válida.")
+        input("\nPresione Enter para continuar...")
+
+def menu_asimetrico():
+    while True:
+        limpiar_pantalla()
+        print("\n--- Criptografía Asimétrica (RSA) ---")
+        print("1. Generar nuevo par de claves (pública/privada)")
+        print("2. Cifrar mensaje (con clave pública)")
+        print("3. Descifrar mensaje (con clave privada)")
+        print("4. Firmar mensaje (con clave privada)")
+        print("5. Validar firma (con clave pública)")
+        print("6. Volver al menú principal")
+        opcion = input("Seleccione una opción: ")
+
+        if opcion == '1':
+            ruta_carpeta = input("Ingrese la carpeta para guardar las claves (dejar vacío para actual): ") or "."
+            base_nombre = input("Ingrese un nombre base para los archivos de clave (ej: mi_par): ") or "clave_rsa"
+            generar_claves_asimetricas(ruta_carpeta, base_nombre)
+        elif opcion == '2':
+            ruta_clave_publica = input("Ingrese la ruta del archivo de clave pública del destinatario: ")
+            clave_publica = cargar_clave_publica(ruta_clave_publica)
+            if clave_publica:
+                mensaje_original = input("Ingrese el mensaje a cifrar (manténgalo corto para RSA): ")
+                mensaje_cifrado = cifrar_mensaje_asimetrico(mensaje_original, clave_publica)
+                if mensaje_cifrado:
+                    print(f"\nMensaje cifrado (bytes): {mensaje_cifrado}")
+                    guardar = input("¿Desea guardar el mensaje cifrado en un archivo? (s/n): ").lower()
+                    if guardar == 's':
+                        nombre_archivo_cifrado = input("Nombre para el archivo cifrado (ej: mensaje_rsa_cifrado.dat): ")
+                        escribir_contenido_archivo(nombre_archivo_cifrado, mensaje_cifrado)
+        elif opcion == '3':
+            ruta_clave_privada = input("Ingrese la ruta de su archivo de clave privada: ")
+            clave_privada = cargar_clave_privada(ruta_clave_privada)
+            if clave_privada:
+                ruta_archivo_cifrado = input("Ingrese la ruta del archivo con el mensaje cifrado: ")
+                mensaje_cifrado = leer_contenido_archivo(ruta_archivo_cifrado)
+                if mensaje_cifrado:
+                    mensaje_descifrado = descifrar_mensaje_asimetrico(mensaje_cifrado, clave_privada)
+                    if mensaje_descifrado:
+                        print(f"\nMensaje descifrado: {mensaje_descifrado}")
+        elif opcion == '4':
+            ruta_clave_privada = input("Ingrese la ruta de su archivo de clave privada para firmar: ")
+            clave_privada = cargar_clave_privada(ruta_clave_privada)
+            if clave_privada:
+                mensaje_original = input("Ingrese el mensaje a firmar: ")
+                firma = firmar_mensaje(mensaje_original, clave_privada)
+                if firma:
+                    print(f"\nFirma generada (bytes): {firma}")
+                    guardar = input("¿Desea guardar la firma en un archivo? (s/n): ").lower()
+                    if guardar == 's':
+                        nombre_archivo_firma = input("Nombre para el archivo de firma (ej: firma.sig): ")
+                        escribir_contenido_archivo(nombre_archivo_firma, firma)
+        elif opcion == '5':
+            ruta_clave_publica = input("Ingrese la ruta del archivo de clave pública del firmante: ")
+            clave_publica = cargar_clave_publica(ruta_clave_publica)
+            if clave_publica:
+                mensaje_original = input("Ingrese el mensaje original que fue firmado: ")
+                ruta_archivo_firma = input("Ingrese la ruta del archivo de firma: ")
+                firma = leer_contenido_archivo(ruta_archivo_firma)
+                if firma:
+                    es_valido = validar_autenticidad(mensaje_original, firma, clave_publica)
+                    print(f"\n¿La firma es válida y el mensaje es auténtico?: {'Sí' if es_valido else 'No'}")
+        elif opcion == '6':
+            break
+        else:
+            print("Opción no válida.")
+        input("\nPresione Enter para continuar...")
+
+def menu_principal():
+    while True:
+        limpiar_pantalla()
+        print("=== Herramienta de Criptografía Didáctica ===")
+        print("Seleccione el tipo de criptografía a utilizar:")
+        print("1. Criptografía Simétrica (Fernet)")
+        print("2. Criptografía Asimétrica (RSA)")
+        print("3. Salir")
+        opcion = input("Su elección: ")
+
+        if opcion == '1':
+            menu_simetrico()
+        elif opcion == '2':
+            menu_asimetrico()
+        elif opcion == '3':
+            print("Saliendo del programa...")
+            break
+        else:
+            print("Opción no válida. Intente de nuevo.")
+            input("Presione Enter para continuar...")
+
+if __name__ == "__main__":
+    menu_principal()
