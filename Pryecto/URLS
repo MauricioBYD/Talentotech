@@ -1,0 +1,220 @@
+import re
+from urllib.parse import urlparse
+import ipaddress
+
+MAX_URL_LENGTH = 100
+SUSPICIOUS_TLDS = ['.xyz', '.top', '.tk', '.link', '.club', '.online', '.site', '.pw', '.biz', '.info', '.ws', '.cc']
+COMMON_PHISHING_KEYWORDS = ['login', 'signin', 'account', 'secure', 'verify', 'update', 'password', 'bank', 'confirm', 'support', 'appleid', 'microsoft']
+SHORTENER_DOMAINS = ['bit.ly', 'tinyurl.com', 'goo.gl', 't.co', 'is.gd', 'ow.ly', 'buff.ly', 'clck.ru']
+MAX_SUBDOMAINS = 4
+MAX_HYPHENS_IN_DOMAIN = 3
+
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+def analyze_url(url):
+    findings = []
+    score = 0
+    original_url = url
+
+    if not re.match(r'^[a-zA-Z]+://', url):
+        url = "http://" + url
+
+    try:
+        parsed_url = urlparse(url)
+        hostname = parsed_url.hostname if parsed_url.hostname else ""
+        path = parsed_url.path
+        scheme = parsed_url.scheme
+    except ValueError:
+        findings.append("URL mal formada o inválida.")
+        return {"url": original_url, "score": 10, "level": "Alto", "findings": findings, "parsed": None}
+
+    if len(original_url) > MAX_URL_LENGTH:
+        findings.append(f"URL demasiado larga ({len(original_url)} caracteres, máx. sugerido {MAX_URL_LENGTH}). Las URLs largas pueden ocultar el verdadero dominio o parámetros maliciosos.")
+        score += 2
+
+    if scheme != 'https':
+        findings.append("No usa HTTPS. Para sitios que manejan información sensible, esto es una señal de alerta.")
+        score += 1
+
+    if hostname:
+        try:
+            ipaddress.ip_address(hostname)
+            findings.append("El dominio es una dirección IP. Muy sospechoso para servicios web legítimos (e.g., bancos, redes sociales).")
+            score += 5
+        except ValueError:
+            pass
+
+    if '@' in parsed_url.netloc and '@' in hostname:
+        if parsed_url.username:
+             findings.append("Contiene '@' en el nombre de dominio/autoridad. Táctica común de phishing para ofuscar el dominio real.")
+             score += 5
+
+    if hostname and hostname.count('.') >= MAX_SUBDOMAINS:
+        findings.append(f"Número excesivo de subdominios ({hostname.count('.')}). Podría intentar ofuscar el dominio real o imitar marcas conocidas (e.g., login.microsoft.com.security-update.com).")
+        score += 3
+
+    if hostname:
+        for tld in SUSPICIOUS_TLDS:
+            if hostname.lower().endswith(tld):
+                findings.append(f"Usa un TLD ('{tld}') a menudo asociado con spam, malware o campañas de phishing de corta duración.")
+                score += 3
+                break
+
+    if hostname and any(ord(char) > 127 for char in hostname):
+        findings.append("Caracteres no ASCII (extraños) en el nombre de dominio. Podría ser un intento de ataque homógrafo.")
+        score += 4
+    if any(ord(char) > 127 for char in path):
+        findings.append("Caracteres no ASCII (extraños) en la ruta de la URL.")
+        score += 2
+
+    combined_domain_path = (hostname.lower() if hostname else "") + path.lower()
+    found_keywords = []
+    for keyword in COMMON_PHISHING_KEYWORDS:
+        if keyword in combined_domain_path:
+            found_keywords.append(keyword)
+    if found_keywords:
+        findings.append(f"Contiene palabras clave sospechosas: {', '.join(found_keywords)}. Común en URLs de phishing para ganar confianza o urgencia.")
+        score += 1
+
+    if hostname:
+        for shortener in SHORTENER_DOMAINS:
+            if shortener in hostname.lower():
+                findings.append(f"Parece ser una URL acortada ({shortener}). Las URLs acortadas ocultan el destino final y son frecuentemente usadas en phishing.")
+                score += 3
+                break
+
+    if '//' in path:
+        findings.append("Doble barra ('//') en la ruta de la URL (después del 'http://' o 'https://'). Podría ser un intento de ofuscación o evasión de filtros.")
+        score += 2
+
+    if hostname and hostname.count('-') > MAX_HYPHENS_IN_DOMAIN:
+         findings.append(f"Excesivos guiones ('-') en el nombre de dominio ({hostname.count('-')}). A veces usado para imitar marcas (e.g., 'my-bank-online-security.com').")
+         score += 2
+
+    if parsed_url.username or parsed_url.password:
+        findings.append("La URL contiene información de usuario/contraseña directamente. Práctica insegura y obsoleta, a veces vista en URLs maliciosas.")
+        score += 3
+
+    level = "Bajo"
+    color = bcolors.OKGREEN
+    if score >= 8:
+        level = "Alto"
+        color = bcolors.FAIL
+    elif score >= 4:
+        level = "Medio"
+        color = bcolors.WARNING
+
+    return {
+        "url": original_url,
+        "score": score,
+        "level": level,
+        "findings": findings,
+        "color": color,
+        "parsed": parsed_url
+    }
+
+def get_urls_from_input():
+    print(f"\n{bcolors.OKCYAN}Pega las URLs (una por línea). Presiona Enter en una línea vacía para finalizar:{bcolors.ENDC}")
+    urls = []
+    while True:
+        try:
+            line = input()
+            if not line.strip():
+                if not urls:
+                    print(f"{bcolors.WARNING}No se ingresaron URLs. Intenta de nuevo o elige otra opción.{bcolors.ENDC}")
+                    continue
+                break
+            urls.append(line.strip())
+        except EOFError:
+            break
+    return urls
+
+def get_urls_from_file():
+    filepath = input(f"\n{bcolors.OKCYAN}Introduce la ruta al archivo .txt con las URLs: {bcolors.ENDC}").strip()
+    urls = []
+    if not filepath:
+        print(f"{bcolors.WARNING}No se especificó una ruta de archivo.{bcolors.ENDC}")
+        return []
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line in f:
+                stripped_line = line.strip()
+                if stripped_line and not stripped_line.startswith("#"):
+                    urls.append(stripped_line)
+        if not urls:
+            print(f"{bcolors.WARNING}El archivo '{filepath}' está vacío o no contiene URLs válidas.{bcolors.ENDC}")
+    except FileNotFoundError:
+        print(f"{bcolors.FAIL}Error: Archivo '{filepath}' no encontrado.{bcolors.ENDC}")
+    except Exception as e:
+        print(f"{bcolors.FAIL}Error al leer el archivo '{filepath}': {e}{bcolors.ENDC}")
+    return urls
+
+def display_results(results):
+    if not results:
+        print(f"{bcolors.WARNING}No se analizaron URLs.{bcolors.ENDC}")
+        return
+
+    print(f"\n{bcolors.HEADER}--- Resultados del Análisis ---{bcolors.ENDC}")
+    for result in results:
+        print(f"\n{bcolors.BOLD}URL Analizada:{bcolors.ENDC} {result['url']}")
+        print(f"{result['color']}{bcolors.BOLD}Nivel de Sospecha: {result['level']} (Puntuación: {result['score']}){bcolors.ENDC}")
+
+        if result['findings']:
+            print(f"{bcolors.UNDERLINE}Hallazgos:{bcolors.ENDC}")
+            for i, finding in enumerate(result['findings'], 1):
+                print(f"  {i}. {result['color']}{finding}{bcolors.ENDC}")
+        else:
+            print(f"{bcolors.OKGREEN}  No se encontraron patrones sospechosos evidentes.{bcolors.ENDC}")
+
+    print(f"\n{bcolors.HEADER}--- Fin del Análisis ---{bcolors.ENDC}")
+    print(f"{bcolors.OKCYAN}Recuerda: Este detector es una ayuda y se basa en patrones comunes.{bcolors.ENDC}")
+    print(f"{bcolors.OKCYAN}Siempre usa el sentido común y verifica la fuente antes de hacer clic o ingresar datos.{bcolors.ENDC}")
+
+def main():
+    print(f"{bcolors.HEADER}{bcolors.BOLD}╔══════════════════════════════════════════╗")
+    print(f"║   Detector de URLs Sospechosas v1.0    ║")
+    print(f"╚══════════════════════════════════════════╝{bcolors.ENDC}")
+    print(f"{bcolors.OKBLUE}Objetivo: Ayudar a identificar patrones en URLs maliciosas.{bcolors.ENDC}")
+
+    urls_to_analyze = []
+    while True:
+        print("\n¿Cómo deseas ingresar las URLs?")
+        print("  1. Copiar y pegar directamente.")
+        print("  2. Desde un archivo .txt.")
+        print("  3. Salir.")
+        choice = input(f"{bcolors.OKCYAN}Elige una opción (1, 2, o 3): {bcolors.ENDC}").strip()
+
+        if choice == '1':
+            urls_to_analyze = get_urls_from_input()
+            break
+        elif choice == '2':
+            urls_to_analyze = get_urls_from_file()
+            break
+        elif choice == '3':
+            print(f"{bcolors.OKBLUE}Saliendo del programa. ¡Mantente seguro online!{bcolors.ENDC}")
+            return
+        else:
+            print(f"{bcolors.FAIL}Opción no válida. Por favor, elige 1, 2 o 3.{bcolors.ENDC}")
+
+    if urls_to_analyze:
+        print(f"\n{bcolors.OKCYAN}Analizando {len(urls_to_analyze)} URL(s)...{bcolors.ENDC}")
+        all_results = []
+        for url in urls_to_analyze:
+            if url:
+                analysis_result = analyze_url(url)
+                all_results.append(analysis_result)
+        display_results(all_results)
+    elif choice != '3':
+        print(f"{bcolors.WARNING}No se proporcionaron URLs para analizar.{bcolors.ENDC}")
+
+if __name__ == "__main__":
+    main()
